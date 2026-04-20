@@ -29,7 +29,7 @@ const QUESTIONS_DB = {
     ]
 };
 
-// Game state (synchronized via localStorage)
+// Game state
 let gameState = {
     teams: [],
     currentTeamIndex: null,
@@ -49,13 +49,18 @@ let gameState = {
         teamName: "",
         teamEmoji: "",
         correctAnswer: "",
-        explanation: ""
+        explanation: "",
+        adminFeedback: "",
+        playerFeedback: ""
     }
 };
 
 let currentMode = null;
 let playerTeamId = null;
 let teamEmojis = ["🌿", "💡", "🌱", "☀️", "♻️", "🔋", "🚲", "🏆", "🌸", "⭐", "🦋", "🍃"];
+let unsubscribeFirebase = null;
+let gameDocRef = null;
+const GAME_ID = "ecotech_main_game";
 
 // DOM Elements
 const modeSelector = document.getElementById('modeSelector');
@@ -82,43 +87,75 @@ const modalOptions = document.getElementById('modalOptions');
 const modalFeedback = document.getElementById('modalFeedback');
 const modalCloseBtn = document.getElementById('modalCloseBtn');
 
-// Save game state to localStorage
-function saveGameState() {
-    localStorage.setItem('ecotech_game_state', JSON.stringify(gameState));
-}
-
-// Load game state from localStorage
-function loadGameState() {
-    const saved = localStorage.getItem('ecotech_game_state');
-    if (saved) {
-        const parsed = JSON.parse(saved);
-        gameState = parsed;
-        return true;
+// Initialize Firebase connection
+async function initFirebase() {
+    if (typeof window.db === 'undefined') {
+        console.warn("Firebase not loaded yet, waiting...");
+        setTimeout(initFirebase, 500);
+        return;
     }
-    return false;
+    
+    gameDocRef = window.doc(window.db, "games", GAME_ID);
+    
+    // Listen to real-time updates from Firebase
+    unsubscribeFirebase = window.onSnapshot(gameDocRef, (docSnapshot) => {
+        if (docSnapshot.exists()) {
+            const firebaseData = docSnapshot.data();
+            if (firebaseData.gameState) {
+                const newState = JSON.parse(firebaseData.gameState);
+                // Only update if different
+                if (JSON.stringify(newState) !== JSON.stringify(gameState)) {
+                    gameState = newState;
+                    refreshUI();
+                }
+            }
+        }
+    });
+    
+    // Try to load existing game
+    const q = window.query(window.collection(window.db, "games"), window.where("__name__", "==", GAME_ID));
+    const querySnapshot = await window.getDocs(q);
+    if (!querySnapshot.empty) {
+        const data = querySnapshot.docs[0].data();
+        if (data.gameState) {
+            gameState = JSON.parse(data.gameState);
+            refreshUI();
+        }
+    } else {
+        // Create initial game document
+        await window.setDoc(gameDocRef, {
+            gameState: JSON.stringify(gameState),
+            lastUpdated: new Date().toISOString()
+        });
+    }
 }
 
-// Force sync across all devices - called after every state change
-function forceSync() {
-    saveGameState();
-    // Trigger manual update on all devices
-    window.dispatchEvent(new Event('storage'));
-    // Also call update directly on current device
+// Save game state to Firebase
+async function saveGameState() {
+    if (gameDocRef) {
+        await window.setDoc(gameDocRef, {
+            gameState: JSON.stringify(gameState),
+            lastUpdated: new Date().toISOString()
+        });
+    }
+}
+
+// Force sync to Firebase
+async function forceSync() {
+    await saveGameState();
     refreshUI();
 }
 
-// Refresh UI based on current mode
+// Refresh UI
 function refreshUI() {
     if (currentMode === 'admin') {
         renderTeamsAdmin();
-        if (gameState.currentTeamIndex !== null && !gameState.winner && gameState.gameActive) {
+        if (gameState.currentTeamIndex !== null && !gameState.winner && gameState.gameActive && gameState.teams[gameState.currentTeamIndex]) {
             const team = gameState.teams[gameState.currentTeamIndex];
-            if (team) {
-                currentTeamDisplay.innerHTML = `
-                    <div class="current-team-label">🎲 Équipe qui va jouer</div>
-                    <div class="current-team-name">${team.emoji} ${escapeHtml(team.name)}</div>
-                `;
-            }
+            currentTeamDisplay.innerHTML = `
+                <div class="current-team-label">🎲 Équipe qui va jouer</div>
+                <div class="current-team-name">${team.emoji} ${escapeHtml(team.name)}</div>
+            `;
         }
     } else if (currentMode === 'player' && playerTeamId) {
         renderTeamsPlayer();
@@ -128,12 +165,13 @@ function refreshUI() {
                 playerWaitingMessage.style.display = 'none';
             } else {
                 playerWaitingMessage.style.display = 'block';
+                playerWaitingMessage.innerHTML = '⏳ En attente que l\'admin lance la partie...';
             }
         }
     }
     
     // Handle modal visibility
-    if (gameState.modalVisible && gameState.currentQuestion && !gameState.winner) {
+    if (gameState.modalVisible && gameState.currentQuestion && !gameState.winner && gameState.teams[gameState.currentTeamIndex]) {
         if (modal.style.display !== 'flex') {
             showQuestionModal();
         } else {
@@ -523,7 +561,6 @@ function resetGame() {
     drawTeamBtn.disabled = false;
     modal.style.display = 'none';
     
-    // Also reset player view if in player mode
     if (currentMode === 'player' && playerTeamId) {
         playerTeamId = null;
         playerRegistration.style.display = 'block';
@@ -569,28 +606,6 @@ function joinGame() {
         playerWaitingMessage.innerHTML = '⏳ En attente que l\'admin lance la partie...';
     }
 }
-
-// Listen for storage changes (sync between devices)
-window.addEventListener('storage', (e) => {
-    if (e.key === 'ecotech_game_state') {
-        loadGameState();
-        refreshUI();
-    }
-});
-
-// Periodically check for updates (backup sync every 2 seconds)
-setInterval(() => {
-    if (currentMode === 'admin' || currentMode === 'player') {
-        const saved = localStorage.getItem('ecotech_game_state');
-        if (saved) {
-            const parsed = JSON.parse(saved);
-            if (JSON.stringify(parsed) !== JSON.stringify(gameState)) {
-                gameState = parsed;
-                refreshUI();
-            }
-        }
-    }
-}, 2000);
 
 function updateModalContent() {
     if (!gameState.currentQuestion) return;
@@ -677,13 +692,20 @@ adminCodeInput.addEventListener('keypress', (e) => {
     }
 });
 
-function enterAdminMode() {
+async function enterAdminMode() {
     currentMode = 'admin';
     modeSelector.style.display = 'none';
     adminPanel.style.display = 'block';
     playerPanel.style.display = 'none';
-    loadGameState();
+    await initFirebase();
     renderTeamsAdmin();
+    
+    // Add connection status indicator
+    const statusDiv = document.createElement('div');
+    statusDiv.id = 'firebase-status';
+    statusDiv.style.cssText = 'background: #00bcd4; color: white; padding: 8px; border-radius: 10px; margin-bottom: 15px; text-align: center; font-size: 12px;';
+    statusDiv.innerHTML = '✅ Connecté à Firebase - Synchronisation en temps réel active';
+    adminPanel.insertBefore(statusDiv, adminPanel.firstChild);
     
     if (gameState.gameActive) {
         drawTeamBtn.disabled = false;
@@ -706,12 +728,12 @@ function enterAdminMode() {
     }
 }
 
-document.getElementById('playerModeBtn').addEventListener('click', () => {
+document.getElementById('playerModeBtn').addEventListener('click', async () => {
     currentMode = 'player';
     modeSelector.style.display = 'none';
     adminPanel.style.display = 'none';
     playerPanel.style.display = 'block';
-    loadGameState();
+    await initFirebase();
     renderTeamsPlayer();
     
     if (gameState.modalVisible && gameState.currentQuestion && !gameState.winner) {
@@ -751,5 +773,5 @@ window.addEventListener('click', (e) => {
     }
 });
 
-loadGameState();
-refreshUI();
+// Don't auto-load - wait for Firebase
+console.log("Game Logic loaded. Waiting for mode selection...");

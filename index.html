@@ -21,10 +21,10 @@
             <button id="adminModeBtn" class="mode-btn admin">👑 Mode Admin</button>
             <button id="playerModeBtn" class="mode-btn player">🎮 Mode Joueur</button>
         </div>
-        <div id="adminAccess" style="margin-top: 20px; display: none;">
-        <input type="password" id="adminCode" class="code-input" placeholder="Code d'accès admin" style="padding: 10px 20px; border-radius: 40px; border: 2px solid #00bcd4; background: rgba(20,20,35,0.9); color: white; text-align: center;">
-        <button id="verifyAdminBtn" style="margin-left: 10px; padding: 10px 25px; border-radius: 40px; background: linear-gradient(135deg, #00bcd4, #0097a7); color: white; border: none; cursor: pointer;">✅ Vérifier</button>
-    </div>
+        <div id="adminAccess" style="margin-top: 20px; display: none; display: flex; justify-content: center; align-items: center; gap: 10px;">
+            <input type="password" id="adminCode" class="code-input" placeholder="Code d'accès admin" style="padding: 10px 20px; border-radius: 40px; border: 2px solid #00bcd4; background: rgba(20,20,35,0.9); color: white; text-align: center;">
+            <button id="verifyAdminBtn" style="padding: 10px 25px; border-radius: 40px; background: linear-gradient(135deg, #00bcd4, #0097a7); color: white; border: none; cursor: pointer;">✅ Vérifier</button>
+        </div>
     </div>
 
     <!-- Admin Panel -->
@@ -89,6 +89,42 @@
     </div>
 </div>
 
-<script src="gameLogic.js"></script>
+<!-- Firebase SDK -->
+<script type="module">
+    import { initializeApp } from "https://www.gstatic.com/firebasejs/11.0.0/firebase-app.js";
+    import { getFirestore, doc, onSnapshot, setDoc, updateDoc, collection, query, where, getDocs } from "https://www.gstatic.com/firebasejs/11.0.0/firebase-firestore.js";
+    import { getAnalytics } from "https://www.gstatic.com/firebasejs/11.0.0/firebase-analytics.js";
+    
+    const firebaseConfig = {
+        apiKey: "AIzaSyBlabnOo9e6BlMV7Yx03MawUIu1p7yqE3s",
+        authDomain: "ecotech-museum-quiz.firebaseapp.com",
+        projectId: "ecotech-museum-quiz",
+        storageBucket: "ecotech-museum-quiz.firebasestorage.app",
+        messagingSenderId: "362621422445",
+        appId: "1:362621422445:web:efbeb0b34df79e7ee1e864",
+        measurementId: "G-VS4D0CNQJM"
+    };
+    
+    const app = initializeApp(firebaseConfig);
+    const analytics = getAnalytics(app);
+    const db = getFirestore(app);
+    
+    // Make Firebase available globally for gameLogic.js
+    window.db = db;
+    window.doc = doc;
+    window.setDoc = setDoc;
+    window.updateDoc = updateDoc;
+    window.onSnapshot = onSnapshot;
+    window.collection = collection;
+    window.query = query;
+    window.where = where;
+    window.getDocs = getDocs;
+    
+    // Load game logic after Firebase is ready
+    const script = document.createElement('script');
+    script.src = 'gameLogic.js';
+    document.body.appendChild(script);
+</script>
+
 </body>
 </html>
