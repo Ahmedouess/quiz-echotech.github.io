@@ -6,7 +6,7 @@
 
 body {
     font-family: 'Segoe UI', 'Poppins', system-ui, sans-serif;
-    background: linear-gradient(rgba(10, 10, 20, 0.85), rgba(5, 5, 15, 0.9)), url('museum.png');
+    background: linear-gradient(rgba(10, 47, 31, 0.85), rgba(10, 47, 31, 0.88)), url('./museum.png');
     background-size: cover;
     background-position: center;
     background-attachment: fixed;
