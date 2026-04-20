@@ -49,11 +49,11 @@ let gameState = {
         teamName: "",
         teamEmoji: "",
         correctAnswer: "",
-        explanation: "" // Only used by admin
+        explanation: ""
     }
 };
 
-let currentMode = null; // 'admin' or 'player'
+let currentMode = null;
 let playerTeamId = null;
 let teamEmojis = ["🌿", "💡", "🌱", "☀️", "♻️", "🔋", "🚲", "🏆", "🌸", "⭐", "🦋", "🍃"];
 
@@ -85,7 +85,6 @@ const modalCloseBtn = document.getElementById('modalCloseBtn');
 // Save game state to localStorage
 function saveGameState() {
     localStorage.setItem('ecotech_game_state', JSON.stringify(gameState));
-    window.dispatchEvent(new Event('storage'));
 }
 
 // Load game state from localStorage
@@ -97,6 +96,52 @@ function loadGameState() {
         return true;
     }
     return false;
+}
+
+// Force sync across all devices - called after every state change
+function forceSync() {
+    saveGameState();
+    // Trigger manual update on all devices
+    window.dispatchEvent(new Event('storage'));
+    // Also call update directly on current device
+    refreshUI();
+}
+
+// Refresh UI based on current mode
+function refreshUI() {
+    if (currentMode === 'admin') {
+        renderTeamsAdmin();
+        if (gameState.currentTeamIndex !== null && !gameState.winner && gameState.gameActive) {
+            const team = gameState.teams[gameState.currentTeamIndex];
+            if (team) {
+                currentTeamDisplay.innerHTML = `
+                    <div class="current-team-label">🎲 Équipe qui va jouer</div>
+                    <div class="current-team-name">${team.emoji} ${escapeHtml(team.name)}</div>
+                `;
+            }
+        }
+    } else if (currentMode === 'player' && playerTeamId) {
+        renderTeamsPlayer();
+        const myTeam = gameState.teams.find(t => t.id === playerTeamId);
+        if (myTeam) {
+            if (gameState.gameActive) {
+                playerWaitingMessage.style.display = 'none';
+            } else {
+                playerWaitingMessage.style.display = 'block';
+            }
+        }
+    }
+    
+    // Handle modal visibility
+    if (gameState.modalVisible && gameState.currentQuestion && !gameState.winner) {
+        if (modal.style.display !== 'flex') {
+            showQuestionModal();
+        } else {
+            updateModalContent();
+        }
+    } else if (!gameState.modalVisible && modal.style.display === 'flex') {
+        modal.style.display = 'none';
+    }
 }
 
 // Render teams for admin
@@ -115,7 +160,7 @@ function renderTeamsAdmin() {
     });
     teamsGrid.innerHTML = html;
     
-    if (gameState.currentTeamIndex !== null && !gameState.winner && gameState.gameActive) {
+    if (gameState.currentTeamIndex !== null && !gameState.winner && gameState.gameActive && gameState.teams[gameState.currentTeamIndex]) {
         const cards = document.querySelectorAll('#teamsGrid .team-card');
         cards.forEach((card, i) => {
             if (i === gameState.currentTeamIndex) {
@@ -171,7 +216,7 @@ function drawTeamWithShuffle() {
     
     drawTeamBtn.disabled = true;
     
-    const availableTeamsNames = gameState.teams.filter(t => t.score < 7).map(t => ({ name: t.name, emoji: t.emoji }));
+    const availableTeamsNames = gameState.teams.filter(t => t.score < 9).map(t => ({ name: t.name, emoji: t.emoji }));
     
     if (availableTeamsNames.length === 0) {
         drawTeamBtn.disabled = false;
@@ -219,7 +264,7 @@ function drawTeamWithShuffle() {
         
         renderTeamsAdmin();
         drawTeamBtn.disabled = false;
-        saveGameState();
+        forceSync();
     }
 }
 
@@ -250,14 +295,14 @@ function selectDifficulty(difficulty, points) {
     gameState.answerLocked = false;
     gameState.answerProcessed = false;
     gameState.modalVisible = true;
-    saveGameState();
+    forceSync();
     
-    // Show modal on current device
     showQuestionModal();
 }
 
 function showQuestionModal() {
     if (!gameState.currentQuestion || !gameState.modalVisible) return;
+    if (!gameState.teams[gameState.currentTeamIndex]) return;
     
     const team = gameState.teams[gameState.currentTeamIndex];
     const points = gameState.currentQuestion.points;
@@ -281,17 +326,13 @@ function showQuestionModal() {
     });
     modalOptions.innerHTML = optionsHtml;
     
-    // Clear feedback
     if (!gameState.answerProcessed) {
         modalFeedback.innerHTML = '';
         modalCloseBtn.style.display = 'none';
     } else {
-        // If answer already processed, show the appropriate feedback
         if (isAdmin) {
-            // Admin gets full explanation
             modalFeedback.innerHTML = gameState.lastAnswer.adminFeedback;
         } else {
-            // Players get simple feedback (no explanation)
             modalFeedback.innerHTML = gameState.lastAnswer.playerFeedback;
         }
         if (isAdmin) {
@@ -299,7 +340,6 @@ function showQuestionModal() {
         }
     }
     
-    // Remove previous listeners and add new ones
     const newOptions = document.querySelectorAll('.modal-option');
     newOptions.forEach(opt => {
         opt.removeEventListener('click', handleAnswer);
@@ -324,7 +364,6 @@ function handleAnswer(e) {
     const isAdmin = (currentMode === 'admin');
     const isMyTurn = (currentMode === 'player' && playerTeamId === team.id);
     
-    // Only the selected team or admin can answer
     if (!isMyTurn && !isAdmin) {
         modalFeedback.innerHTML = `<div class="modal-feedback">⛔ Seule l'équipe ${team.emoji} ${team.name} peut répondre à cette question !</div>`;
         return;
@@ -345,7 +384,6 @@ function handleAnswer(e) {
         if (idx === selectedIdx && idx !== gameState.currentQuestion.correct) opt.classList.add('wrong');
     });
     
-    // Store answer info for both admin and players
     gameState.lastAnswer = {
         isCorrect: isCorrect,
         points: points,
@@ -353,11 +391,9 @@ function handleAnswer(e) {
         teamEmoji: team.emoji,
         correctAnswer: correctAnswerText,
         explanation: explanation,
-        // Admin feedback (with explanation)
         adminFeedback: isCorrect 
             ? `<div class="modal-feedback">✅ BRAVO ! +${points} point${points > 1 ? 's' : ''} pour ${escapeHtml(team.name)}<br>📚 ${explanation}</div>`
             : `<div class="modal-feedback">❌ Dommage ! La bonne réponse était : "${correctAnswerText}"<br>📚 ${explanation}<br><span style="color:#ff9800;">0 point pour cette question</span></div>`,
-        // Player feedback (NO explanation - just result)
         playerFeedback: isCorrect 
             ? `<div class="modal-feedback">✅ BRAVO ! +${points} point${points > 1 ? 's' : ''} pour ${escapeHtml(team.name)}</div>`
             : `<div class="modal-feedback">❌ Dommage ! La bonne réponse était : "${correctAnswerText}"<br><span style="color:#ff9800;">0 point pour cette question</span></div>`
@@ -367,7 +403,6 @@ function handleAnswer(e) {
         team.score += points;
     }
     
-    // Show appropriate feedback based on who is viewing
     if (currentMode === 'admin') {
         modalFeedback.innerHTML = gameState.lastAnswer.adminFeedback;
         renderTeamsAdmin();
@@ -376,10 +411,10 @@ function handleAnswer(e) {
         modalFeedback.innerHTML = gameState.lastAnswer.playerFeedback;
         renderTeamsPlayer();
         modalCloseBtn.style.display = 'none';
-        modalFeedback.innerHTML += `<div class="waiting-for-answer">⏳ En attente...</div>`;
+        modalFeedback.innerHTML += `<div class="waiting-for-answer">⏳ En attente que l'admin ferme cette fenêtre...</div>`;
     }
     
-    saveGameState();
+    forceSync();
 }
 
 function checkWinner() {
@@ -389,7 +424,7 @@ function checkWinner() {
             gameState.gameActive = false;
             gameState.modalVisible = false;
             showWinner(team);
-            saveGameState();
+            forceSync();
             return true;
         }
     }
@@ -417,7 +452,7 @@ function closeModalAndNextTurn() {
     modal.style.display = 'none';
     gameState.modalVisible = false;
     gameState.currentQuestion = null;
-    saveGameState();
+    forceSync();
     
     const hasWinner = checkWinner();
     if (!hasWinner) {
@@ -450,7 +485,7 @@ function nextTurn() {
         <div class="current-team-name">---</div>
     `;
     renderTeamsAdmin();
-    saveGameState();
+    forceSync();
 }
 
 function resetGame() {
@@ -478,7 +513,7 @@ function resetGame() {
             playerFeedback: ""
         }
     };
-    saveGameState();
+    forceSync();
     renderTeamsAdmin();
     currentTeamDisplay.innerHTML = `
         <div class="current-team-label">🎲 Équipe qui va jouer</div>
@@ -487,6 +522,14 @@ function resetGame() {
     difficultySelector.style.display = 'none';
     drawTeamBtn.disabled = false;
     modal.style.display = 'none';
+    
+    // Also reset player view if in player mode
+    if (currentMode === 'player' && playerTeamId) {
+        playerTeamId = null;
+        playerRegistration.style.display = 'block';
+        playerGameInfo.style.display = 'none';
+    }
+    
     alert("Jeu réinitialisé ! Les joueurs peuvent maintenant rejoindre.");
 }
 
@@ -512,7 +555,7 @@ function joinGame() {
     
     gameState.teams.push(newTeam);
     playerTeamId = newTeam.id;
-    saveGameState();
+    forceSync();
     
     playerRegistration.style.display = 'none';
     playerGameInfo.style.display = 'block';
@@ -523,7 +566,7 @@ function joinGame() {
         playerWaitingMessage.style.display = 'none';
     } else {
         playerWaitingMessage.style.display = 'block';
-        playerWaitingMessage.innerHTML = '⏳ En attente...';
+        playerWaitingMessage.innerHTML = '⏳ En attente que l\'admin lance la partie...';
     }
 }
 
@@ -531,58 +574,27 @@ function joinGame() {
 window.addEventListener('storage', (e) => {
     if (e.key === 'ecotech_game_state') {
         loadGameState();
-        
-        if (currentMode === 'admin') {
-            renderTeamsAdmin();
-            
-            // Update current team display
-            if (gameState.currentTeamIndex !== null && !gameState.winner && gameState.gameActive) {
-                const team = gameState.teams[gameState.currentTeamIndex];
-                currentTeamDisplay.innerHTML = `
-                    <div class="current-team-label">🎲 Équipe qui va jouer</div>
-                    <div class="current-team-name">${team.emoji} ${escapeHtml(team.name)}</div>
-                `;
-                if (gameState.currentDifficulty === null && !gameState.waitingForDraw) {
-                    difficultySelector.style.display = 'block';
-                }
-            }
-            
-            // Handle modal visibility
-            if (gameState.modalVisible && gameState.currentQuestion && !gameState.winner) {
-                if (modal.style.display !== 'flex') {
-                    showQuestionModal();
-                } else {
-                    updateModalContent();
-                }
-            } else if (!gameState.modalVisible && modal.style.display === 'flex') {
-                modal.style.display = 'none';
-            }
-            
-        } else if (currentMode === 'player' && playerTeamId) {
-            renderTeamsPlayer();
-            
-            if (gameState.gameActive) {
-                playerWaitingMessage.style.display = 'none';
-            } else {
-                playerWaitingMessage.style.display = 'block';
-            }
-            
-            // Handle modal visibility for players
-            if (gameState.modalVisible && gameState.currentQuestion && !gameState.winner) {
-                if (modal.style.display !== 'flex') {
-                    showQuestionModal();
-                } else {
-                    updateModalContent();
-                }
-            } else if (!gameState.modalVisible && modal.style.display === 'flex') {
-                modal.style.display = 'none';
-            }
-        }
+        refreshUI();
     }
 });
 
+// Periodically check for updates (backup sync every 2 seconds)
+setInterval(() => {
+    if (currentMode === 'admin' || currentMode === 'player') {
+        const saved = localStorage.getItem('ecotech_game_state');
+        if (saved) {
+            const parsed = JSON.parse(saved);
+            if (JSON.stringify(parsed) !== JSON.stringify(gameState)) {
+                gameState = parsed;
+                refreshUI();
+            }
+        }
+    }
+}, 2000);
+
 function updateModalContent() {
     if (!gameState.currentQuestion) return;
+    if (!gameState.teams[gameState.currentTeamIndex]) return;
     
     const team = gameState.teams[gameState.currentTeamIndex];
     const isAdmin = (currentMode === 'admin');
@@ -591,7 +603,6 @@ function updateModalContent() {
     modalPoints.textContent = `${gameState.currentQuestion.points} point${gameState.currentQuestion.points > 1 ? 's' : ''}`;
     modalQuestion.textContent = gameState.currentQuestion.text;
     
-    // If answer has been processed, show the appropriate feedback
     if (gameState.answerProcessed) {
         if (isAdmin) {
             modalFeedback.innerHTML = gameState.lastAnswer.adminFeedback;
@@ -599,19 +610,17 @@ function updateModalContent() {
         } else {
             modalFeedback.innerHTML = gameState.lastAnswer.playerFeedback;
             if (!modalFeedback.innerHTML.includes('En attente')) {
-                modalFeedback.innerHTML += `<div class="waiting-for-answer">⏳ En attente...</div>`;
+                modalFeedback.innerHTML += `<div class="waiting-for-answer">⏳ En attente que l'admin ferme cette fenêtre...</div>`;
             }
             modalCloseBtn.style.display = 'none';
         }
         
-        // Disable all options
         const options = document.querySelectorAll('.modal-option');
         options.forEach(opt => {
             opt.style.pointerEvents = 'none';
             opt.classList.add('disabled');
         });
     } else {
-        // Update options if not answered yet
         const isMyTurn = (currentMode === 'player' && playerTeamId === team.id);
         let optionsHtml = '';
         gameState.currentQuestion.options.forEach((opt, idx) => {
@@ -625,7 +634,6 @@ function updateModalContent() {
         });
         modalOptions.innerHTML = optionsHtml;
         
-        // Re-attach event listeners
         const newOptions = document.querySelectorAll('.modal-option');
         newOptions.forEach(opt => {
             opt.removeEventListener('click', handleAnswer);
@@ -640,19 +648,16 @@ function updateModalContent() {
 let adminAccessGranted = false;
 const ADMIN_CODE = "ECOTECH2024";
 
-// Get the admin access div elements
 const adminAccessDiv = document.getElementById('adminAccess');
 const adminCodeInput = document.getElementById('adminCode');
 const verifyAdminBtn = document.getElementById('verifyAdminBtn');
 
-// Admin mode button click - show the code input instead of directly entering
 document.getElementById('adminModeBtn').addEventListener('click', () => {
     adminAccessDiv.style.display = 'flex';
     adminCodeInput.value = '';
     adminCodeInput.focus();
 });
 
-// Verify button click
 verifyAdminBtn.addEventListener('click', () => {
     const enteredCode = adminCodeInput.value;
     if (enteredCode === ADMIN_CODE) {
@@ -666,7 +671,6 @@ verifyAdminBtn.addEventListener('click', () => {
     }
 });
 
-// Allow Enter key to submit
 adminCodeInput.addEventListener('keypress', (e) => {
     if (e.key === 'Enter') {
         verifyAdminBtn.click();
@@ -683,7 +687,7 @@ function enterAdminMode() {
     
     if (gameState.gameActive) {
         drawTeamBtn.disabled = false;
-        if (gameState.currentTeamIndex !== null && !gameState.winner) {
+        if (gameState.currentTeamIndex !== null && !gameState.winner && gameState.teams[gameState.currentTeamIndex]) {
             const team = gameState.teams[gameState.currentTeamIndex];
             currentTeamDisplay.innerHTML = `
                 <div class="current-team-label">🎲 Équipe qui va jouer</div>
@@ -697,13 +701,11 @@ function enterAdminMode() {
         drawTeamBtn.disabled = true;
     }
     
-    // Show modal if needed
     if (gameState.modalVisible && gameState.currentQuestion && !gameState.winner) {
         showQuestionModal();
     }
 }
 
-// Player mode (no code needed)
 document.getElementById('playerModeBtn').addEventListener('click', () => {
     currentMode = 'player';
     modeSelector.style.display = 'none';
@@ -712,7 +714,6 @@ document.getElementById('playerModeBtn').addEventListener('click', () => {
     loadGameState();
     renderTeamsPlayer();
     
-    // Show modal if needed
     if (gameState.modalVisible && gameState.currentQuestion && !gameState.winner) {
         showQuestionModal();
     }
@@ -723,7 +724,7 @@ drawTeamBtn.addEventListener('click', () => {
     if (!gameState.gameActive) {
         gameState.gameActive = true;
         gameState.gameStarted = true;
-        saveGameState();
+        forceSync();
     }
     drawTeamWithShuffle();
 });
@@ -740,17 +741,15 @@ document.querySelectorAll('.difficulty-btn').forEach(btn => {
 resetGameAdminBtn.addEventListener('click', resetGame);
 joinGameBtn.addEventListener('click', joinGame);
 
-// Admin close button for modal
 modalCloseBtn.addEventListener('click', () => {
     closeModalAndNextTurn();
 });
 
-// Close modal on outside click (admin only)
 window.addEventListener('click', (e) => {
     if (e.target === modal && currentMode === 'admin' && gameState.answerProcessed) {
         closeModalAndNextTurn();
     }
 });
 
-// Initial load
 loadGameState();
+refreshUI();
